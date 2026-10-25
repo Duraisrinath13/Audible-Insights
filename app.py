@@ -113,8 +113,23 @@ def keyword_recommend(text, n):
     text_vector = tfidf.transform([text.lower()])
     similarity = cosine_similarity(text_vector, tfidf_matrix)[0]
     final_score = 0.8 * similarity + 0.2 * df["Score"].values
+    final_score[similarity == 0] = -1          # only keep books that really match the words
     top_index = final_score.argsort()[::-1][:n]
+    top_index = [i for i in top_index if similarity[i] > 0]
     return df.loc[top_index], similarity[top_index]
+
+def word_search(text, n):
+    # Backup search: used when TF-IDF does not know the words (rare words are not in the vocabulary)
+    all_text = (df["Book Name"] + " " + df["Genres"] + " " + df["Description"]).str.lower()
+    words = [w for w in text.lower().split() if len(w) > 2]
+    match_count = pd.Series(0, index=df.index)
+    for w in words:
+        match_count = match_count + all_text.str.contains(w, regex=False).astype(int)
+    found = df[match_count > 0].copy()
+    found["match_count"] = match_count[match_count > 0]
+    found = found.sort_values(by=["match_count", "Score"], ascending=False).head(n)
+    return found.drop(columns=["match_count"])
+
 
 @st.cache_data
 def get_all_genres():
@@ -269,8 +284,14 @@ elif page == "💡 Search by Interest":
 
     if text.strip() != "":
         result, matches = keyword_recommend(text, n)
-        if matches.max() == 0:
-            st.warning("No books match these words. Try different words.")
+        if len(matches) == 0:
+            result = word_search(text, n)
+            if len(result) == 0:
+                st.warning("No books match these words. Try different words.")
+            else:
+                st.subheader(f"Results for “{text}”")
+                st.caption("Found by searching titles, genres and descriptions")
+                show_books(result)
         else:
             st.subheader(f"Results for “{text}”")
             show_books(result, matches)
